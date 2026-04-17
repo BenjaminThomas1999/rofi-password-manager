@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# ~/.local/bin/pass-rofi
+set -euo pipefail
+
+STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/pass-rofi-state"
+HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/pass-rofi-history"
+
+# Read state and timestamp
+state=$(awk 'NR==1' "$STATE_FILE" 2>/dev/null || echo "username")
+timestamp=$(awk 'NR==2' "$STATE_FILE" 2>/dev/null || echo "0")
+now=$(date +%s)
+age=$(( now - timestamp ))
+
+# Get all entries
+all_entries=$(find ~/.password-store -name "*.gpg" \
+  | sed "s|$HOME/.password-store/||;s|\.gpg$||" \
+  | sort)
+
+# Build sorted list: history entries first (by frequency), then the rest
+if [[ -f "$HISTORY_FILE" ]]; then
+    # Count frequency of each entry in history, sort by count descending
+    history_sorted=$(sort "$HISTORY_FILE" | uniq -c | sort -rn | awk '{print $2}')
+    # Append entries not in history
+    remainder=$(comm -23 \
+        <(echo "$all_entries" | sort) \
+        <(echo "$history_sorted" | sort))
+    entries=$(printf '%s\n%s' "$history_sorted" "$remainder")
+else
+    entries="$all_entries"
+fi
+
+if [[ "$state" == "password" && $age -lt 45 ]]; then
+    printf 'username\n%s\n' "$now" > "$STATE_FILE"
+    chosen=$(echo "$entries" | rofi -dmenu -i -p "Password: " -no-show-icons -theme-str 'window {width: 50%;}')
+    [[ -z "$chosen" ]] && exit 0
+    pass show "$chosen" | head -1 | tr -d '\n' | wl-copy
+else
+    printf 'password\n%s\n' "$now" > "$STATE_FILE"
+    chosen=$(echo "$entries" | rofi -dmenu -i -p "Username: " -no-show-icons -theme-str 'window {width: 50%;}')
+    [[ -z "$chosen" ]] && exit 0
+    pass show "$chosen" | grep -i "^login:" | cut -d' ' -f2 | tr -d '"' | tr -d '\n' | wl-copy
+fi
+
+# Record selection to history
+echo "$chosen" >> "$HISTORY_FILE"
